@@ -6,55 +6,34 @@ template CheckRoot(n) { // compute the root of a MerkleTree of n Levels
     signal input leaves[2**n];
     signal output root;
 
-    component hash = Poseidon(2);
-    hash.inputs[0] <== a;
-    hash.inputs[1] <== b;
+    var totalLeaves = 2**n;
+    var numHashers = totalLeaves - 1;
 
-    // say n = 3
-    // when n==0
-    // 
+    // Initialize all the hashers
+    component hashers[numHashers];
+    var i;
+    for (i=0; i<numHashers; i++) {
+        hashers[i] = Poseidon(2);
+    }
 
+    // Hash all the leaves
+    // We separate the leaves from other layers because they don't require hashing
+    var numLeafHashers = totalLeaves / 2;
+    for (i=0; i<numLeafHashers; i++) {
+        hashers[i].inputs[0] <== leaves[i*2];
+        hashers[i].inputs[1] <== leaves[i*2+1];
+    }
 
-    //[assignment] insert your code here to calculate the Merkle root from 2^n leaves
-    //for (var i=0; i<n; i+=2){
-        // hash (leaves[i], leaves[i+1])
-    //}
-// let n = 2;
+    // Hash other layers
+    var numIntermediateHashers = numLeafHashers - 1;
+    var k = 0;
+    for (i=numLeafHashers; i<numLeafHashers+numIntermediateHashers; i++){
+        hashers[i].inputs[0] <== hashers[k*2].out;
+        hashers[i].inputs[1] <== hashers[k*2+1].out;
+        k++;
+    }
 
-// let leaves = [1,2,3,4]; //2**n
-// let root;
-
-// let i;
-
-// let nHashes = 0;
-// for (i = 0; i < n; i++) {
-//   nHashes += 2 ** i;
-// }
-// let hashes = []; // nHashes
-// console.log(nHashes);
-
-// for (i = 0; i < nHashes; i++) {
-//   hashes[i] = {};
-// }
-
-// for (i = 0; i < 2 ** n; i+=2) {
-//   console.log(i, i+1);
-//   hashes[i].leaf1 = leaves[i];
-//   hashes[i].leaf2 = leaves[i + 1];
-// }
-
-// console.log(hashes);
-
-// var k = 0;
-// for (i = 2 ** (n - 1); i < nHashes; i++) {
-//   hashes[i].leaf1 = hashes[k * 2].hash;
-//   hashes[i].leaf2 = hashes[k * 2 + 1].hash;
-
-//   k++;
-// }
-
-// root = hashes[nHashes - 1].hash;
-
+    root <== hashers[numHashers-1].out;
 }
 
 template MerkleTreeInclusionProof(n) {
@@ -65,3 +44,5 @@ template MerkleTreeInclusionProof(n) {
 
     //[assignment] insert your code here to compute the root from a leaf and elements along the path
 }
+
+component main = CheckRoot(3);
