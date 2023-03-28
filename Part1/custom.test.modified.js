@@ -2,7 +2,7 @@ const hre = require('hardhat')
 const { ethers, waffle } = hre
 const { loadFixture } = waffle
 const { expect } = require('chai')
-const { utils } = ethers
+const { utils, Wallet } = ethers
 
 const Utxo = require('../src/utxo')
 const { transaction, registerAndTransact, prepareTransaction, buildMerkleTree } = require('../src/index')
@@ -124,6 +124,90 @@ describe('Custom Tests', function () {
   })
 
   it('[assignment] iii. see assignment doc for details', async () => {
-      // [assignment] complete code here
+    // [assignment] complete code here
+    const { tornadoPool, token, omniBridge } = await loadFixture(fixture)
+    expect(await token.balanceOf(tornadoPool.address)).to.equal(0)
+    expect(await token.balanceOf(omniBridge.address)).to.equal(0)
+
+    // Alice deposits 0.13 ETH in L1 
+    const aliceKeypair = new Keypair()
+    const aliceDepositAmount = utils.parseEther('0.13')
+    const aliceDepositUtxo = new Utxo({
+      amount: aliceDepositAmount, 
+      keypair: aliceKeypair
+    })
+    await token.transfer(omniBridge.address, aliceDepositAmount)
+    expect(await token.balanceOf(tornadoPool.address)).to.equal(0)
+    expect(await token.balanceOf(omniBridge.address)).to.equal(aliceDepositAmount)
+
+    // Bridge from L1 to L2
+    // 1. Set up a token transfer tx
+    const transferTx = await token.populateTransaction.transfer(tornadoPool.address, aliceDepositAmount)
+    // 2. Set up the commitment tx
+    const { args, extData } = await prepareTransaction({tornadoPool, outputs: [aliceDepositUtxo]})
+    const onTokenBridgedData = encodeDataForBridge({proof: args, extData})
+    const onTokenBridgedTx = await tornadoPool.populateTransaction.onTokenBridged( token.address, aliceDepositUtxo.amount, onTokenBridgedData ) 
+    await omniBridge.execute([
+      {who: token.address, callData: transferTx.data},
+      {who: tornadoPool.address, callData: onTokenBridgedTx.data }
+    ])
+    expect(await token.balanceOf(omniBridge.address)).to.equal(0) 
+    expect(await token.balanceOf(tornadoPool.address)).to.equal(aliceDepositAmount)
+
+    // Alice sends 0.06 ETH to Bob in L2
+    const aliceTfBobAmount = utils.parseEther('0.06')
+    const aliceTfBobUtxo = new Utxo({
+      amount: aliceDepositAmount.sub(aliceTfBobAmount),
+      keypair: aliceKeypair
+    })
+    const bobKeypair = new Keypair();
+    const bobAddress = bobKeypair.address(); // this is a shielded address
+    const bobReceiveUtxo = new Utxo({
+      amount: aliceTfBobAmount,
+      keypair: bobKeypair
+    })
+    await transaction({
+      tornadoPool,
+      inputs: [aliceDepositUtxo],
+      outputs: [aliceTfBobUtxo, bobReceiveUtxo],
+    })
+
+    // Bob withdraws all his funds in L2 
+    // Utxo describes the end state
+    const bobWithdrawUtxo = new Utxo({
+      amount: 0,
+      keypair: bobKeypair
+    })
+    const bobEthAddress = Wallet.createRandom().address
+    await transaction({
+      tornadoPool,
+      inputs: [bobReceiveUtxo],
+      outputs: [bobWithdrawUtxo],
+      recipient: bobEthAddress
+    })
+
+    const bobBalance = await token.balanceOf(bobEthAddress)
+    expect(bobBalance).to.be.equal(aliceTfBobAmount)
+    const omniBridgeBalance = await token.balanceOf(omniBridge.address)
+    expect(omniBridgeBalance).to.be.equal(0)
+    const tornadoPoolBalance = await token.balanceOf(tornadoPool.address)
+    expect(tornadoPoolBalance).to.be.equal(aliceDepositAmount.sub(aliceTfBobAmount))
+
+    // Alice withdraws all her remaining funds in L1
+    const aliceWithdrawUtxo = new Utxo({
+      amount: 0,
+      keypair: aliceKeypair
+    })
+    const aliceEthAddress = Wallet.createRandom().address
+    await transaction({
+      tornadoPool,
+      inputs: [aliceTfBobUtxo],
+      outputs: [aliceWithdrawUtxo],
+      recipient: aliceEthAddress,
+      isL1Withdrawal: true // some magic here 
+    })
+    // assert all relevant balances are correct
+    const aliceBalance = await token.balanceOf(aliceEthAddress)
+    expect(aliceBalance).to.be.equal(0)
   })
 })
